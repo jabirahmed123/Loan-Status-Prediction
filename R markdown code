@@ -1,0 +1,334 @@
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+#Importing the data
+df <- read.csv("credit.csv")
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Loading the packages
+pacman::p_load(esquisse, ggplot2, caret, rmarkdown, corrplot, e1071, dplyr, ggpubr, mice, tidyr, rpart, party, randomForest, nnet, NeuralNetTools)
+
+search()
+theme_set(theme_classic())
+options(digits = 3)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Understanding the data
+head(df)
+dim(df)
+str(df)
+summary(df)
+colSums(is.na(df))
+```
+## DATA PREPROCESSING
+The data has large number of missing/null values. Columns LoanID and CustomerID seem irrelevant for prediction so they have been removed. 50% of data in the column Months since last delinquent is filled with null values, so it was removed as well.
+
+The Current Loan Amount Column has median 312246 but max value as 99999999. Upon further investigation, there was only one values 99999999 which had multiple instances. So this value had to converted to null, then imputed the nulls using MICE package.
+
+The values in credit score range from 585 to 7510, which is strange considering the credit score is within the range of 300-850. It was deduced that some values had been scaled up by 10. These values had to be scaled down by 10.
+Columns Credit score and Annual Income also had large number of null values. These nulls were imputed using the MICE package.
+
+The column Years in current job also had null values. Since the values are categorical, the nulls were replaced with the highest accuring category.
+The categories in the predictor variable Loan Status were converted to '0' and '1'.
+Finally, most of the rows contained exactly 514 null values. These values were omitted.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Deleting the unrequired columns
+data <- df
+df$Loan.ID <- NULL
+df$Customer.ID <- NULL
+df$Months.since.last.delinquent <- NULL
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Converting the value 99999999 in column current loan amount to null so that it can be imputed.
+df$Current.Loan.Amount[df$Current.Loan.Amount ==99999999] <- NA
+summary(df)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#To deal with null values in Credit score and Annual Income
+idf <- df %>% 
+  dplyr::select(Credit.Score, Annual.Income, Current.Loan.Amount)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Imputing data using MICE(Multivariate Imputation By Chained Equations)
+#idf <- idf <- mice(idf,m=5,maxit=5,meth='pmm',seed=500)
+#idf <- complete(idf, 5)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Downloading dataframe containing updated Credit score and Annual Income
+#write.csv(idf, "E:/Notes/BA with R\\CreditScore.csv", row.names = TRUE)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Importing the updated data
+df <- read.csv("CreditScore.csv", na.strings = "")
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Understanding the data
+df2 <- df
+head(df)
+dim(df)
+str(df)
+summary(df)
+colSums(is.na(df))
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+df$Years.in.current.job <- replace_na(df$Years.in.current.job, "10+ years")
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+df3 <- na.omit(df)
+colSums(is.na(df3))
+summary(df3)
+str(df3)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Some values of credit score soom to be scaled up by 10, hence for every value that is greater than 850, we scale it down by 10.
+df3$Credit.Score  <- ifelse(df3$Credit.Score>850, df3$Credit.Score/10, df3$Credit.Score)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Converting Loan Status values to 0 for charged off and 1 for fully paid.
+df3$Loan.Status <- factor(df3$Loan.Status, levels=c("Charged Off","Fully Paid"), labels=c(0,1))
+```
+## EXPLORATORY DATA ANALYSIS
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+ggplot(df3) +
+ aes(x = Loan.Status) +
+ geom_bar(fill = "#ef562d") +
+ theme_minimal()
+```
+
+This is our predictor variable Loan Status. It has two categories, Fully Paid which '1' and Charged Off which is '0'. We can notice that count of Fully paid is at 80,000, whereas count of Charged off is only at 20,000. This could lead to our predictive model being biased towards fully paid.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+ggplot(df3) +
+ aes(x = Credit.Score, y = Annual.Income) +
+ geom_point(size = 1L, colour = "#0c4c8a") +
+ylim(0, 10000000) +
+ theme_minimal()
+```
+
+This is a plot of Credit Score against Annual Income. We would expect that these two variables would have a strong relation, because generally, customers with high income would have high credit score. But this is not the case here. These two variables do not seem to have a strong relation between them.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+ggplot(df3) +
+ aes(x = Number.of.Credit.Problems, y = Monthly.Debt) +
+ geom_point(size = 1L, colour = "#0c4c8a") +
+ theme_minimal()
+```
+
+This is a plot of Number of credit problems against Monthly Debt. We would expect that customers with high monthly debt would have more number of credit problems. But that is not the case here. These two variables do not display a strong relationship either.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+corrdata <- df3 %>% 
+  dplyr::select(Credit.Score, Annual.Income, Current.Loan.Amount, Monthly.Debt, Years.of.Credit.History, Number.of.Open.Accounts, Number.of.Credit.Problems, Current.Credit.Balance, Maximum.Open.Credit, Bankruptcies, Tax.Liens)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+corr <- cor(corrdata)
+corrplot(corr, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+```
+
+The correlation between Number of credit problems and bankruptcies is very high at 0.75. This makes sense because people with a lot of credit problems eventually get bankrupt. The correlation between Number of credit problems and tax liens is also quite high at 0.58.This also makes sense because lien is imposed on failure of payment, and a person with lot of credit problems is most likely to not pay the loan amount. Bankruptcies and tax liens should not be added to our model because this could lead to multicollinearity.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+df3$Bankruptcies <- NULL
+df3$Tax.Liens <- NULL
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Partioning the data
+set.seed(123)
+trainindex <- createDataPartition(df3$Loan.Status, p=0.7, list= FALSE)
+train <- df3[trainindex, ]
+test <- df3[-trainindex, ]
+```
+## SUPERVISED MACHINE LEARNING
+
+1. Decision Tree
+    + Using RPART
+    
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Using rpart
+dt <- rpart(Loan.Status ~ Credit.Score, data = train ,method = "class", control = rpart.control(minsplit = 10))
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+#Confusion matrix
+pred1 <- predict(dt, test, type = 'class')
+conf.matrix1 <- table(Predicted = pred1, Actual = test$Loan.Status)
+conf.matrix1
+    # accuracy
+(sum(diag(conf.matrix1))) / sum(conf.matrix1)
+```
+Accuracy of the model is 77.4%.
+Even though the accuracy of the model is good, it has correctly predicted the Charged off class 0 times.
+
+```{r message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE, include=FALSE}
+TrueClass <- factor(c(0, 0, 1, 1))
+PredictedClass <- factor(c(0, 1, 0, 1))
+Y      <- c(0, 6776, 0, 23162)
+df <- data.frame(TrueClass, PredictedClass, Y)
+
+library(ggplot2)
+ggplot(data =  df, mapping = aes(x = TrueClass, y = PredictedClass)) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = 1) +
+  scale_fill_gradient() +
+  theme_bw() + theme(legend.position = "none")
+```
+1. Decision Tree
+    + Using CTREE
+    
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+#Using ctree
+tree = ctree(Loan.Status ~ ., data = train)
+#Visualize the decision tree
+plot(tree)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+#Confusion matrix
+pred1 <- predict(tree, test)
+conf.matrix1 <- table(Predicted = pred1, Actual = test$Loan.Status)
+conf.matrix1
+    # accuracy
+(sum(diag(conf.matrix1))) / sum(conf.matrix1)
+```
+Accuracy of the model is 77.4%.
+The model has correctly predicted the Charged off class 50 times.
+
+```{r message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE, include=FALSE}
+TrueClass <- factor(c(0, 0, 1, 1))
+PredictedClass <- factor(c(0, 1, 0, 1))
+Y      <- c(50, 6726, 50, 23112)
+df <- data.frame(TrueClass, PredictedClass, Y)
+
+library(ggplot2)
+ggplot(data =  df, mapping = aes(x = TrueClass, y = PredictedClass)) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = 1) +
+  scale_fill_gradient() +
+  theme_bw() + theme(legend.position = "none")
+```
+2. Random Forest
+    + Before Tuning
+    
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+rf <- randomForest(Loan.Status ~., data=train, ntree=500, importance =T)
+plot(rf)
+```
+
+Here the black line is the Out Of Bag error, red is the error in prediciting '0' class, and green is error in prediciting '1' class. We can notice that at 50 trees the error is minimum.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+#Confusion matrix
+pred1 <- predict(rf, test)
+conf.matrix1 <- table(Predicted = pred1, Actual = test$Loan.Status)
+conf.matrix1
+    # accuracy
+(sum(diag(conf.matrix1))) / sum(conf.matrix1)
+```
+Accuracy of the model is 77.5%.
+The model has correctly predicted Charged off class 142 times.
+
+```{r message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE, include=FALSE}
+TrueClass <- factor(c(0, 0, 1, 1))
+PredictedClass <- factor(c(0, 1, 0, 1))
+Y      <- c(142, 6634, 104, 23058)
+df <- data.frame(TrueClass, PredictedClass, Y)
+
+library(ggplot2)
+ggplot(data =  df, mapping = aes(x = TrueClass, y = PredictedClass)) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = 1) +
+  scale_fill_gradient() +
+  theme_bw() + theme(legend.position = "none")
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+#Variable importance plot
+varImpPlot(rf,pch=18,col='darkgreen')
+```
+
+From the variable importance plot, Annual Income, Monthly Debt, Maximum Open Credit, Current Credit Balance, and Credit Score seem like important variables for predicition.
+
+2. Random Forest
+    + After Tuning
+    
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+rf1 <- randomForest(Loan.Status ~ Annual.Income + Monthly.Debt + Current.Credit.Balance + Maximum.Open.Credit + Credit.Score, data=train, ntree=50, importance =T)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+#Confusion matrix
+pred1 <- predict(rf1, test)
+conf.matrix1 <- table(Predicted = pred1, Actual = test$Loan.Status)
+conf.matrix1
+    # accuracy
+(sum(diag(conf.matrix1))) / sum(conf.matrix1)
+```
+The accuracy of the model is 76.9%.
+Even though the accuracy of this model is lower than previous models, this model correctly predicted 331 instances as '0' or Charged Off, which is much greater than our previous models.
+```{r message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE, include=FALSE}
+TrueClass <- factor(c(0, 0, 1, 1))
+PredictedClass <- factor(c(0, 1, 0, 1))
+Y      <- c(331, 6445, 480, 22682)
+df <- data.frame(TrueClass, PredictedClass, Y)
+
+library(ggplot2)
+ggplot(data =  df, mapping = aes(x = TrueClass, y = PredictedClass)) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = 1) +
+  scale_fill_gradient() +
+  theme_bw() + theme(legend.position = "none")
+```
+
+3. Naives Bayes Classifier
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+nb <- naiveBayes(Loan.Status ~ Annual.Income + Monthly.Debt + Current.Credit.Balance + Maximum.Open.Credit + Credit.Score, data = train)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+#Confusion matrix
+pred1 <- predict(nb, test, type = 'class')
+confusionMatrix(factor(pred1), test$Loan.Status)
+```
+The accuracy of this model is 68.3 which by far the lowest.
+The model has correctly predicted the Charged off class 1443 times, which is an immense improvement from the previous models.
+
+```{r message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE, include=FALSE}
+TrueClass <- factor(c(0, 0, 1, 1))
+PredictedClass <- factor(c(0, 1, 0, 1))
+Y      <- c(1443, 5333, 4151, 19011)
+df <- data.frame(TrueClass, PredictedClass, Y)
+
+library(ggplot2)
+ggplot(data =  df, mapping = aes(x = TrueClass, y = PredictedClass)) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = 1) +
+  scale_fill_gradient() +
+  theme_bw() + theme(legend.position = "none")
+```
+
+4. Neural Networks
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+nn <- nnet(Loan.Status ~ Annual.Income + Monthly.Debt + Current.Credit.Balance + Maximum.Open.Credit + Credit.Score, data=train, size = 10)
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+pred1 <- predict(nn, test, type = 'class')
+confusionMatrix(factor(pred1), test$Loan.Status)
+```
+The accuracy of this model is 77.4%.
+The model has correctly predicted Charged off class 0 times, same as the Decision Tree model.
+```{r message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE, include=FALSE}
+TrueClass <- factor(c(0, 0, 1, 1))
+PredictedClass <- factor(c(0, 1, 0, 1))
+Y      <- c(0, 6776, 0, 23162)
+df <- data.frame(TrueClass, PredictedClass, Y)
+
+library(ggplot2)
+ggplot(data =  df, mapping = aes(x = TrueClass, y = PredictedClass)) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = 1) +
+  scale_fill_gradient() +
+  theme_bw() + theme(legend.position = "none")
+```
+
+## CONCLUSION
+The selection of model is solely based on the task at hand. For our case, it is riskier for banks to give loans to customers who would not repay it rather than not give loans to customers who would repay it. So, it is important for banks to predict the customers whose loans were charged off rather than the customers that fully paid their loans. Based on this theory, the Naive Bayes Classification model would be the best model for the banks.
